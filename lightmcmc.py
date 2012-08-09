@@ -51,8 +51,13 @@ def single_rejection(model, condition, query):
 
 
 def rejection(model, condition, query, num_samples):
-    samples = mapp(lambda _: single_rejection(model, condition, query),
-                   range(num_samples))
+    samples = []
+    for _ in range(int(num_samples / 100)):
+        samples += mapp(lambda _: single_rejection(model, condition, query),
+                        range(100))
+    if num_samples % 100:
+        samples += mapp(lambda _: single_rejection(model, condition, query),
+                        range(num_samples % 100))
     return samples
 
 
