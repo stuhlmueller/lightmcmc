@@ -40,6 +40,17 @@ def random_seed(seed):
     random.seed(seed)
 
 
+def memoize(obj):
+    cache = obj.cache = {}
+
+    @functools.wraps(obj)
+    def memoizer(*args, **kwargs):
+        if args not in cache:
+            cache[args] = obj(*args, **kwargs)
+        return cache[args]
+    return memoizer
+
+
 # --------------------------------------------------------------------
 # Rejection
 
@@ -264,6 +275,7 @@ def sample_binomial(n, p):
     return np.random.binomial(n, p)
 
 
+@memoize
 def score_binomial(n, k, p):
     if k > n:
         return 0.0
