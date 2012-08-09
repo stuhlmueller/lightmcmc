@@ -59,6 +59,10 @@ def rejection(model, condition, query, num_samples):
 # --------------------------------------------------------------------
 # MCMC
 
+class ZeroProbabilityException(Exception):
+    pass
+
+
 class Choice(object):
 
     def __init__(self, sampler, scorer, description):
@@ -71,6 +75,8 @@ class Choice(object):
             draw = world[name]
             draw.choice = self
             draw.tick_touched = tick
+            if draw.score == 0:
+                raise ZeroProbabilityException
             return draw.value
         else:
             value = self.sampler()
@@ -85,6 +91,8 @@ class Choice(object):
             draw.tick_touched = tick
             draw.value = fixed_val
             draw.fixed = True
+            if draw.score == 0:
+                raise ZeroProbabilityException
             return fixed_val
         else:
             draw = Draw(fixed_val, self, tick, fixed=True)
@@ -169,11 +177,15 @@ def mcmc(model, condition, query, num_steps, num_samples):
     samples = []
     for i in range(num_samples):
         for j in range(num_steps):
-            proposal, new_value, bw, fw = world.propose(model, i * j)
-            if condition(new_value):
-                p = (proposal.score() / world.score()) * (bw / fw)
-                if p >= 1 or flip(p):
-                    world, value = proposal, new_value
+            try:
+                proposal, new_value, bw, fw = world.propose(model, i * j)
+            except ZeroProbabilityException:
+                pass
+            else:
+                if condition(new_value):
+                    p = (proposal.score() / world.score()) * (bw / fw)
+                    if p >= 1 or flip(p):
+                        world, value = proposal, new_value
         samples.append(query(value))
     return samples
 
