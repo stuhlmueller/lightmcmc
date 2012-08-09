@@ -207,7 +207,21 @@ def mcmc(model, condition, query, num_steps, num_samples):
 
 
 # --------------------------------------------------------------------
-# Example
+# Random primitives
+
+def church_flip(world, name, tick, p):
+    choice = Choice(sampler=lambda: flip(p),
+                    scorer=lambda val: p if val else 1 - p,
+                    description="flip")
+    return choice.sample(world, name, tick)
+
+
+def church_flip_fixed(world, name, tick, p, fixed_val):
+    choice = Choice(sampler=lambda: flip(p),
+                    scorer=lambda val: p if val else 1 - p,
+                    description="flip")
+    return choice.set(world, name, tick, fixed_val)
+
 
 def sample_geometric(p):
     if flip(p):
@@ -297,13 +311,31 @@ def church_binomial_fixed(world, name, tick, n, p, fixed_val):
     return choice.set(world, name, tick, fixed_val)
 
 
-def test_transdimensional():
+# --------------------------------------------------------------------
+# Examples and tests
 
-    def church_flip(world, name, tick, p):
-        choice = Choice(sampler=lambda: flip(p),
-                        scorer=lambda val: 1 / 3 if val else 2 / 3,
-                        description="flip")
-        return choice.sample(world, name, tick)
+def test_constraints():
+
+    def model(init_world, tick):
+        world = init_world.copy()
+        A = church_flip(world, "B", tick, .5)
+        B_w = .00001 if A else .00002
+        B = church_flip_fixed(world, "A", tick, B_w, True)
+        return (world, {"A": A, "B": B})
+
+    condition = lambda val: val["B"]
+
+    query = lambda val: val["A"]
+
+    np.random.seed(7)
+    random.seed(7)
+
+    mcmc_samples = mcmc(model, condition, query,
+                        num_steps=1000, num_samples=200)
+    print(histogram(mcmc_samples))
+
+
+def test_transdimensional():
 
     def model(init_world, tick):
         world = init_world.copy()
@@ -357,10 +389,11 @@ def test_hierarchical():
         samples_per_bag = 10
         bag_samples = {}
         for bag in range(bags_tested):
-            bag_p = church_listdraw(world, "bag_p_%i" % bag, tick, bag_ps)
+            bag_p = church_listdraw(
+                world, "bag_p_%i" % bag, tick, bag_ps)
             bag_k = church_binomial_fixed(
-                world, "bag_k_%i" % bag, tick, samples_per_bag,
-                bag_p, fixed_val=observed_samples[bag])
+                world, "bag_k_%i" % bag, tick,
+                samples_per_bag, bag_p, fixed_val=observed_samples[bag])
             bag_samples[bag] = bag_k
         return (world, {"num_bag_types": num_bag_types,
                         "bag_samples": bag_samples })
@@ -369,10 +402,10 @@ def test_hierarchical():
 
     query = lambda val: val["num_bag_types"]
 
-    random_seed(7)
+    random_seed(9)
 
-    samples = mcmc(model, condition, query, num_steps=100, num_samples=10)
+    samples = mcmc(model, condition, query, num_steps=10, num_samples=10000)
     print(histogram(samples))
 
 
-test_transdimensional()
+test_hierarchical()
