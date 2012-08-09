@@ -35,6 +35,11 @@ def discrete(ps):
     return np.searchsorted(c, y)
 
 
+def random_seed(seed):
+    np.random.seed(seed)
+    random.seed(seed)
+
+
 # --------------------------------------------------------------------
 # Rejection
 
@@ -288,8 +293,7 @@ def test_transdimensional():
 
     query = lambda val: val["A"]
 
-    np.random.seed(7)
-    random.seed(7)
+    random_seed(7)
 
     rejection_samples = rejection(model, condition, query, num_samples=500)
     mcmc_samples = mcmc(model, condition, query,
@@ -318,15 +322,15 @@ def test_hierarchical():
     def model(init_world, tick):
         world = init_world.copy()
         num_bag_types = church_geometric(world, "num_bag_types", tick, .4)
-        bag_ps = [church_uniform(world, "bag_type_p_" + i, tick, 0, 1)
+        bag_ps = [church_uniform(world, "bag_type_p_%i" % i, tick, 0, 1)
                   for i in range(num_bag_types)]
         bags_tested = len(observed_samples)
         samples_per_bag = 10
         bag_samples = {}
         for bag in range(bags_tested):
-            bag_p = church_listdraw(world, "bag_p_" + bag, tick, bag_ps)
+            bag_p = church_listdraw(world, "bag_p_%i" % bag, tick, bag_ps)
             bag_k = church_binomial_fixed(
-                world, "bag_k_" + bag, tick, samples_per_bag,
+                world, "bag_k_%i" % bag, tick, samples_per_bag,
                 bag_p, fixed_val=observed_samples[bag])
             bag_samples[bag] = bag_k
         return (world, {"num_bag_types": num_bag_types,
@@ -336,8 +340,7 @@ def test_hierarchical():
 
     query = lambda val: val["num_bag_types"]
 
-    np.random.seed(7)
-    random.seed(7)
+    random_seed(7)
 
     samples = mcmc(model, condition, query, num_steps=100, num_samples=10)
     print(histogram(samples))
