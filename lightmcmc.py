@@ -51,6 +51,15 @@ def memoize(obj):
     return memoizer
 
 
+def extract(d, keys):
+    return dict((k, d[k]) for k in keys if k in d)
+
+
+def sample_dict_subset(dic, subset_size):
+    subset_keys = random.sample(dic, subset_size)
+    return extract(dic, subset_keys)
+
+
 # --------------------------------------------------------------------
 # Rejection
 
@@ -206,6 +215,40 @@ def mcmc(model, condition, query, num_steps, num_samples):
     return samples
 
 
+def subset_mcmc(model, condition, query, num_steps, num_samples, data, subset_size):
+    subset = sample_dict_subset(data, subset_size)
+    _model = lambda *args: model(*args, data=subset)
+    _condition = lambda *args: condition(*args, data=subset)
+    _query = lambda *args: query(*args, data=subset)
+    return mcmc(_model, _condition, _query, num_steps, num_samples)
+
+
+def windowed_mcmc(model, condition, query, num_steps, num_samples, data, window_size):
+    _get_model = lambda subset: lambda *args: model(*args, data=subset)
+    _get_condition = lambda subset: lambda *args: condition(*args, data=subset)
+    _get_query = lambda subset: lambda *args: query(*args, data=subset)
+    subset = sample_dict_subset(data, window_size)
+    world, value = initialize(_get_model(subset), _get_condition(subset))
+    samples = []
+    for i in range(num_samples):
+        for j in range(num_steps):
+            subset = sample_dict_subset(data, window_size)
+            _model = _get_model(subset)
+            try:
+                proposal, new_value, bw, fw = world.propose(_model, i * j)
+            except ZeroProbabilityException:
+                pass
+            else:
+                _condition = _get_condition(subset)
+                if _condition(new_value):
+                    p = (proposal.score() / world.score()) * (bw / fw)
+                    if p >= 1 or flip(p):
+                        world, value = proposal, new_value
+        _query = _get_query(subset)
+        samples.append(_query(value))
+    return samples
+
+
 # --------------------------------------------------------------------
 # Random primitives
 
@@ -330,8 +373,7 @@ def test_constraints():
     np.random.seed(7)
     random.seed(7)
 
-    mcmc_samples = mcmc(model, condition, query,
-                        num_steps=1000, num_samples=200)
+    mcmc_samples = mcmc(model, condition, query, num_steps=1000, num_samples=200)
     print(histogram(mcmc_samples))
 
 
@@ -348,7 +390,7 @@ def test_transdimensional():
             B = 1 if ((z % 2) == 1) else 0
         w = 1 / 3 if B else 2 / 3
         C = church_flip(world, "c", tick, w)
-        return (world, {"A": A, "B": B, "C": C })
+        return (world, {"A": A, "B": B, "C": C})
 
     condition = lambda val: val["C"]
 
@@ -357,13 +399,14 @@ def test_transdimensional():
     random_seed(7)
 
     rejection_samples = rejection(model, condition, query, num_samples=500)
-    mcmc_samples = mcmc(model, condition, query,
-                        num_steps=1000, num_samples=100)
+    mcmc_samples = mcmc(model, condition, query, num_steps=1000, num_samples=100)
     print(histogram(rejection_samples))
     print(histogram(mcmc_samples))
 
 
 def test_hierarchical():
+
+    ELEMENTS_PER_BAG = 10
 
     observed_samples = {
         0: 1,
@@ -378,33 +421,28 @@ def test_hierarchical():
         9: 10
         }
 
-    # compare number of bag types > window size vs number of bag types <
-    # window size
-    def model(init_world, tick):
+    def model(init_world, tick, data=observed_samples):
         world = init_world.copy()
         num_bag_types = church_geometric(world, "num_bag_types", tick, .4)
         bag_ps = [church_uniform(world, "bag_type_p_%i" % i, tick, 0, 1)
                   for i in range(num_bag_types)]
-        bags_tested = len(observed_samples)
-        samples_per_bag = 10
         bag_samples = {}
-        for bag in range(bags_tested):
-            bag_p = church_listdraw(
-                world, "bag_p_%i" % bag, tick, bag_ps)
-            bag_k = church_binomial_fixed(
-                world, "bag_k_%i" % bag, tick,
-                samples_per_bag, bag_p, fixed_val=observed_samples[bag])
+        for bag in data.keys():
+            bag_p = church_listdraw(world, "bag_p_%i" % bag, tick, bag_ps)
+            bag_k = church_binomial_fixed(world, "bag_k_%i" % bag, tick, ELEMENTS_PER_BAG, bag_p, fixed_val=data[bag])
             bag_samples[bag] = bag_k
         return (world, {"num_bag_types": num_bag_types,
-                        "bag_samples": bag_samples })
+                        "bag_samples": bag_samples})
 
-    condition = lambda val: val["bag_samples"] == observed_samples
+    def condition(val, data=observed_samples):
+        return val["bag_samples"] == data
 
-    query = lambda val: val["num_bag_types"]
+    def query(val, data=observed_samples):
+        return val["num_bag_types"]
 
     random_seed(9)
-
     samples = mcmc(model, condition, query, num_steps=10, num_samples=10000)
+                   # data=observed_samples, window_size=10)
     print(histogram(samples))
 
 
