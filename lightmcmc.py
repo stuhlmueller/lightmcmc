@@ -3,6 +3,8 @@
 from __future__ import division
 from collections import Counter
 from scipy.stats.distributions import binom
+from datetime import datetime
+from pytools import timedelta_to_seconds
 import functools
 import numpy as np
 import operator
@@ -197,10 +199,15 @@ def initialize(model, condition):
     return world, value
 
 
-def mcmc(model, condition, query, num_steps, num_samples):
+def mcmc(model, condition, query, num_steps, num_samples=None, runtime=None):
+    assert num_samples or runtime
     world, value = initialize(model, condition)
-    samples = []
-    for i in range(num_samples):
+    results = {"samples": [],
+               "timing": []}
+    i = 0
+    t_0 = datetime.now()
+    t = 0
+    while (num_samples and i < num_samples) or (runtime and t < runtime):
         for j in range(num_steps):
             try:
                 proposal, new_value, bw, fw = world.propose(model, i * j)
@@ -211,42 +218,14 @@ def mcmc(model, condition, query, num_steps, num_samples):
                     p = (proposal.score() / world.score()) * (bw / fw)
                     if p >= 1 or flip(p):
                         world, value = proposal, new_value
-        samples.append(query(value))
-    return samples
-
-
-def subset_mcmc(model, condition, query, num_steps, num_samples, data, subset_size):
-    subset = sample_dict_subset(data, subset_size)
-    _model = lambda *args: model(*args, data=subset)
-    _condition = lambda *args: condition(*args, data=subset)
-    _query = lambda *args: query(*args, data=subset)
-    return mcmc(_model, _condition, _query, num_steps, num_samples)
-
-
-def windowed_mcmc(model, condition, query, num_steps, num_samples, data, window_size):
-    _get_model = lambda subset: lambda *args: model(*args, data=subset)
-    _get_condition = lambda subset: lambda *args: condition(*args, data=subset)
-    _get_query = lambda subset: lambda *args: query(*args, data=subset)
-    subset = sample_dict_subset(data, window_size)
-    world, value = initialize(_get_model(subset), _get_condition(subset))
-    samples = []
-    for i in range(num_samples):
-        for j in range(num_steps):
-            subset = sample_dict_subset(data, window_size)
-            _model = _get_model(subset)
-            try:
-                proposal, new_value, bw, fw = world.propose(_model, i * j)
-            except ZeroProbabilityException:
-                pass
-            else:
-                _condition = _get_condition(subset)
-                if _condition(new_value):
-                    p = (proposal.score() / world.score()) * (bw / fw)
-                    if p >= 1 or flip(p):
-                        world, value = proposal, new_value
-        _query = _get_query(subset)
-        samples.append(_query(value))
-    return samples
+            t = timedelta_to_seconds(datetime.now() - t_0)
+            if runtime and t > runtime:
+                break
+        query_value = query(value)
+        i += 1
+        results["samples"].append(query_value)
+        results["timing"].append(t)
+    return results
 
 
 # --------------------------------------------------------------------
@@ -373,7 +352,8 @@ def test_constraints():
     np.random.seed(7)
     random.seed(7)
 
-    mcmc_samples = mcmc(model, condition, query, num_steps=1000, num_samples=200)
+    mcmc_results = mcmc(model, condition, query, num_steps=100, num_samples=173)
+    mcmc_samples = mcmc_results["samples"]
     print(histogram(mcmc_samples))
 
 
@@ -396,10 +376,11 @@ def test_transdimensional():
 
     query = lambda val: val["A"]
 
-    random_seed(7)
+    random_seed(9)
 
     rejection_samples = rejection(model, condition, query, num_samples=500)
-    mcmc_samples = mcmc(model, condition, query, num_steps=1000, num_samples=100)
+    mcmc_results = mcmc(model, condition, query, num_steps=1000, num_samples=100)
+    mcmc_samples = mcmc_results["samples"]
     print(histogram(rejection_samples))
     print(histogram(mcmc_samples))
 
@@ -429,7 +410,8 @@ def test_hierarchical():
         bag_samples = {}
         for bag in data.keys():
             bag_p = church_listdraw(world, "bag_p_%i" % bag, tick, bag_ps)
-            bag_k = church_binomial_fixed(world, "bag_k_%i" % bag, tick, ELEMENTS_PER_BAG, bag_p, fixed_val=data[bag])
+            bag_k = church_binomial_fixed(world, "bag_k_%i" % bag, tick,
+                                          ELEMENTS_PER_BAG, bag_p, fixed_val=data[bag])
             bag_samples[bag] = bag_k
         return (world, {"num_bag_types": num_bag_types,
                         "bag_samples": bag_samples})
@@ -440,10 +422,22 @@ def test_hierarchical():
     def query(val, data=observed_samples):
         return val["num_bag_types"]
 
-    random_seed(9)
-    samples = mcmc(model, condition, query, num_steps=10, num_samples=10000)
-                   # data=observed_samples, window_size=10)
-    print(histogram(samples))
+    def getdata(num_clusters):
+        data = {}
+        for i in range(10):
+            data[i] = ((i % num_clusters) + 1) * 20
+        return data
+
+    random_seed(10)
+
+    def runmcmc():
+        mcmc_results = mcmc(model, condition, query, num_steps=100, runtime=5 * 60)
+        mcmc_samples = mcmc_results["samples"]
+        return ("mcmc", len(mcmc_samples), histogram(mcmc_samples))
+
+    all_results = mapp(lambda f: f(), [runmcmc] * 5)
+    for result in all_results:
+        print result
 
 
 test_hierarchical()
